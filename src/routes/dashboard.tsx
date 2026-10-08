@@ -6,13 +6,13 @@ import type { TaskEntity, MemoryEntity, ExtractedTask, ExtractedMemory } from "@
 export const Route = createFileRoute("/dashboard")({
   head: () => ({
     meta: [
-      { title: "Dashboard — Mind Dump & Memory" },
+      { title: "Dashboard — StepOut" },
       {
         name: "description",
         content:
           "Submit raw thoughts and let open-source AI extract actionable tasks and durable memories.",
       },
-      { property: "og:title", content: "Dashboard — Mind Dump" },
+      { property: "og:title", content: "Dashboard — StepOut" },
     ],
   }),
   component: Dashboard,

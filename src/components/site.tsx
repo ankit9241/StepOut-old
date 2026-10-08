@@ -6,7 +6,7 @@ export function Header() {
   return (
     <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-6 md:px-10 md:py-8">
       <Link to="/" className="display text-xl md:text-2xl">
-        Physical CAPTCHA
+        StepOut
       </Link>
       <nav className="hidden items-center gap-8 text-sm md:flex">
         <Link to="/dashboard" className="link-quiet" activeProps={{ className: "text-primary" }}>
@@ -54,7 +54,7 @@ export function Header() {
 export function Footer() {
   return (
     <footer className="mx-auto flex max-w-6xl justify-between px-6 py-10 text-xs text-muted-foreground md:px-10">
-      <span>Physical CAPTCHA</span>
+      <span>StepOut</span>
       <span>Less interface. More real world.</span>
     </footer>
   );

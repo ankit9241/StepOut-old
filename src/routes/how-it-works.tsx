@@ -4,13 +4,13 @@ import { Page } from "@/components/site";
 export const Route = createFileRoute("/how-it-works")({
   head: () => ({
     meta: [
-      { title: "How it works — Physical CAPTCHA" },
+      { title: "How it works — StepOut" },
       {
         name: "description",
         content:
-          "The screen is the shortest part. How Physical CAPTCHA turns context into a real-world task.",
+          "The screen is the shortest part. How StepOut turns context into a real-world task.",
       },
-      { property: "og:title", content: "How it works — Physical CAPTCHA" },
+      { property: "og:title", content: "How it works — StepOut" },
       { property: "og:description", content: "The screen is the shortest part." },
     ],
   }),
@@ -48,7 +48,7 @@ function How() {
         <p className="label md:col-span-4">Why open-source AI?</p>
         <div className="max-w-xl md:col-span-8">
           <p className="text-lg">
-            Physical CAPTCHA is designed around open-weight models. Challenge generation can run
+            StepOut is designed around open-weight models. Challenge generation can run
             locally, on your own hardware, and the model can be swapped or adapted to your place,
             language and pace.
           </p>

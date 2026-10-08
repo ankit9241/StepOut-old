@@ -4,14 +4,14 @@ import { Page } from "@/components/site";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Physical CAPTCHA — A CAPTCHA you can’t solve from your screen" },
+      { title: "StepOut — Real-World Challenges Away From Your Screen" },
       {
         name: "description",
         content:
           "Give a little context. Get a small physical challenge to complete away from your screen.",
       },
-      { property: "og:title", content: "Physical CAPTCHA" },
-      { property: "og:description", content: "A CAPTCHA you can’t solve from your screen." },
+      { property: "og:title", content: "StepOut" },
+      { property: "og:description", content: "Step out from your screen into the real world." },
     ],
   }),
   component: Index,
@@ -23,9 +23,9 @@ function Index() {
   return (
     <Page>
       <section className="max-w-4xl">
-        <p className="label rise">Physical CAPTCHA</p>
+        <p className="label rise">StepOut</p>
         <h1 className="display rise-2 mt-6 text-[3.25rem] md:text-[7rem]">
-          A CAPTCHA you can’t solve from your <em className="text-primary">screen.</em>
+          A challenge you can’t solve from your <em className="text-primary">screen.</em>
         </h1>
         <p className="rise-3 mt-8 max-w-md text-lg text-muted-foreground">
           Give us a little context. We’ll give you something to do in the real world.

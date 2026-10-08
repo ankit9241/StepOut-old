@@ -6,9 +6,9 @@ import { store } from "@/lib/captcha";
 export const Route = createFileRoute("/return")({
   head: () => ({
     meta: [
-      { title: "Welcome back — Physical CAPTCHA" },
+      { title: "Welcome back — StepOut" },
       { name: "description", content: "Tell us what happened out there." },
-      { property: "og:title", content: "Welcome back — Physical CAPTCHA" },
+      { property: "og:title", content: "Welcome back — StepOut" },
       { property: "og:description", content: "What did you notice?" },
     ],
   }),

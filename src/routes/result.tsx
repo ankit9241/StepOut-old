@@ -13,9 +13,9 @@ import {
 export const Route = createFileRoute("/result")({
   head: () => ({
     meta: [
-      { title: "You went somewhere — Physical CAPTCHA" },
+      { title: "You went somewhere — StepOut" },
       { name: "description", content: "A short field note on what you did away from the screen." },
-      { property: "og:title", content: "You went somewhere — Physical CAPTCHA" },
+      { property: "og:title", content: "You went somewhere — StepOut" },
       { property: "og:description", content: "A personal field note." },
     ],
   }),
@@ -69,7 +69,7 @@ function Result() {
           </dd>
         </div>
         <div className="border-t py-8">
-          <dt className="label !text-primary">Next CAPTCHA</dt>
+          <dt className="label !text-primary">Next Challenge</dt>
           <dd className="mt-6">
             <button onClick={another} className="btn">
               Give me another →

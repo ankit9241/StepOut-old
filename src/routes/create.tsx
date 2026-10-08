@@ -6,12 +6,12 @@ import { generateChallenge, store, type Context } from "@/lib/captcha";
 export const Route = createFileRoute("/create")({
   head: () => ({
     meta: [
-      { title: "What do you have today? — Physical CAPTCHA" },
+      { title: "What do you have today? — StepOut" },
       {
         name: "description",
         content: "Share your time, energy and constraints to get a challenge that fits your day.",
       },
-      { property: "og:title", content: "Create a challenge — Physical CAPTCHA" },
+      { property: "og:title", content: "Create a challenge — StepOut" },
       {
         property: "og:description",
         content: "A little context helps the challenge fit your actual life.",
@@ -87,7 +87,7 @@ function Create() {
         </label>
         <div className="border-t pt-10">
           <button type="submit" className="btn w-full justify-center md:w-auto">
-            Generate my CAPTCHA →
+            Generate my challenge →
           </button>
         </div>
       </form>

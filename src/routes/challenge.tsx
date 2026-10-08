@@ -6,12 +6,12 @@ import { CHALLENGES, generateChallenge, store, type Challenge } from "@/lib/capt
 export const Route = createFileRoute("/challenge")({
   head: () => ({
     meta: [
-      { title: "Your CAPTCHA — Physical CAPTCHA" },
+      { title: "Your Challenge — StepOut" },
       {
         name: "description",
         content: "Your physical challenge. Read it once, then leave the screen.",
       },
-      { property: "og:title", content: "Your CAPTCHA — Physical CAPTCHA" },
+      { property: "og:title", content: "Your Challenge — StepOut" },
       { property: "og:description", content: "A small field instruction for the real world." },
     ],
   }),
@@ -41,7 +41,7 @@ function ChallengePage() {
         className={`max-w-4xl transition-all duration-700 ${leaving ? "translate-y-[-12px] opacity-0" : ""}`}
       >
         <div className="rise flex items-baseline justify-between border-b pb-4">
-          <p className="label !text-primary">Your CAPTCHA</p>
+          <p className="label !text-primary">Your Challenge</p>
           <p className="label">{c.duration} minutes</p>
         </div>
         <h1 className="display rise-2 mt-10 text-[2.75rem] md:text-[5.5rem]">{c.title}</h1>
