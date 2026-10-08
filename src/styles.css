@@ -1,0 +1,167 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-serif: "Instrument Serif", Georgia, serif;
+  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-lg: 4px;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--background);
+  --color-card-foreground: var(--foreground);
+  --color-popover: var(--background);
+  --color-popover-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--foreground);
+  --color-muted: var(--secondary);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--primary);
+  --color-accent-foreground: var(--primary-foreground);
+  --color-destructive: var(--primary);
+  --color-border: var(--border);
+  --color-input: var(--border);
+  --color-ring: var(--primary);
+}
+
+:root {
+  --background: oklch(0.97 0.007 85);
+  --foreground: oklch(0.2 0.004 75);
+  --primary: oklch(0.57 0.15 35);
+  --primary-foreground: oklch(0.97 0.007 85);
+  --secondary: oklch(0.935 0.01 85);
+  --muted-foreground: oklch(0.55 0.01 75);
+  --border: oklch(0.88 0.013 85);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  html {
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    line-height: 1.6;
+  }
+  ::selection {
+    background: var(--primary);
+    color: var(--primary-foreground);
+  }
+  textarea,
+  input {
+    font: inherit;
+  }
+}
+
+@utility display {
+  font-family: var(--font-serif);
+  font-weight: 400;
+  line-height: 1.02;
+  letter-spacing: -0.015em;
+}
+
+@utility label {
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+
+@utility btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  padding: 0.95rem 1.5rem;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  border-radius: 2px;
+  transition:
+    background 0.2s,
+    transform 0.2s;
+  &:hover {
+    background: var(--foreground);
+  }
+  &:active {
+    transform: translateY(1px);
+  }
+}
+
+@utility link-quiet {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-decoration-color: var(--border);
+  text-underline-offset: 5px;
+  transition:
+    text-decoration-color 0.2s,
+    color 0.2s;
+  &:hover {
+    text-decoration-color: var(--primary);
+    color: var(--primary);
+  }
+}
+
+@utility field {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  padding: 0.75rem 0;
+  outline: none;
+  resize: none;
+  transition: border-color 0.2s;
+  &::placeholder {
+    color: var(--muted-foreground);
+    opacity: 0.8;
+  }
+  &:focus {
+    border-color: var(--foreground);
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@utility rise {
+  animation: rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+@utility rise-2 {
+  animation: rise 0.7s 0.15s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+@utility rise-3 {
+  animation: rise 0.7s 0.3s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+@utility rise-4 {
+  animation: rise 0.7s 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@utility fade-slow {
+  animation: fade 1.6s ease both;
+}
