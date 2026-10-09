@@ -23,6 +23,7 @@ dist-ssr
 # Test coverage & caches
 coverage/
 .vitest/
+*.traineddata
 
 # Editor directories and files
 .vscode/*

@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: stepout
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NITRO_PRESET
+        value: node-server
+      - key: ALLOW_IN_MEMORY_DB
+        value: "false"
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DB_NAME
+        value: stepout
+      - key: OLLAMA_BASE_URL
+        sync: false
+      - key: OLLAMA_MODEL
+        value: gemma3:latest
+      - key: OLLAMA_TIMEOUT_MS
+        value: "60000"
+      - key: WHISPER_URL
+        sync: false

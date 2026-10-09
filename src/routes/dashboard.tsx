@@ -1,7 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Page } from "@/components/site";
 import type { TaskEntity, MemoryEntity, ExtractedTask, ExtractedMemory } from "@/server/types";
+import {
+  getNotificationPermission,
+  requestNotificationPermission,
+  triggerBrowserNotification,
+  formatReminderNotification,
+} from "@/lib/notifications";
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({
@@ -26,14 +32,29 @@ interface ProposalState {
   source: {
     id: string;
     content: string;
+    sourceType?: "text" | "image" | "pdf" | "audio";
+    originalFileName?: string | null;
     createdAt: string;
   };
 }
 
 function Dashboard() {
   const [content, setContent] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [isDumping, setIsDumping] = useState(false);
   const [dumpError, setDumpError] = useState<string | null>(null);
+
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(() =>
+    getNotificationPermission(),
+  );
+  const [dueAlerts, setDueAlerts] = useState<{ id: string; title: string; body: string }[]>([]);
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<number | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [proposal, setProposal] = useState<ProposalState | null>(null);
   const [isConfirming, setIsConfirming] = useState(false);
@@ -76,21 +97,210 @@ function Dashboard() {
     loadData();
   }, [loadData]);
 
+  // Periodic reminder checking (every 30s)
+  useEffect(() => {
+    let isCancelled = false;
+
+    const checkDueReminders = async () => {
+      try {
+        const res = await fetch("/api/reminders/due");
+        if (!res.ok) return;
+        const data = (await res.json()) as { reminders?: TaskEntity[] };
+        if (isCancelled || !data.reminders || data.reminders.length === 0) return;
+
+        for (const task of data.reminders) {
+          const { title, body } = formatReminderNotification(task);
+
+          // 1. Trigger browser notification if permission granted
+          triggerBrowserNotification(title, body);
+
+          // 2. Add to in-app alerts banner (fallback / in-app view)
+          setDueAlerts((prev) => {
+            if (prev.some((a) => a.id === task._id)) return prev;
+            return [...prev, { id: task._id, title, body }];
+          });
+
+          // 3. Mark as sent so it is not repeatedly triggered
+          await fetch(`/api/reminders/${task._id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: "sent" }),
+          });
+        }
+      } catch (err) {
+        console.warn("Error polling due reminders:", err);
+      }
+    };
+
+    checkDueReminders();
+    const interval = setInterval(checkDueReminders, 30000);
+    return () => {
+      isCancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
+
+  const speechRecognitionRef = useRef<unknown>(null);
+  const speechTranscriptRef = useRef<string>("");
+
+  // Voice recording toggle
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+      speechTranscriptRef.current = "";
+      const recorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+
+      // Start optional browser SpeechRecognition for zero-cost instant voice-to-text
+      const SpeechRecognitionClass =
+        (
+          window as unknown as {
+            SpeechRecognition?: new () => {
+              continuous: boolean;
+              interimResults: boolean;
+              lang: string;
+              onresult: (e: { results: { isFinal: boolean; 0: { transcript: string } }[] }) => void;
+              start: () => void;
+              stop: () => void;
+            };
+            webkitSpeechRecognition?: new () => {
+              continuous: boolean;
+              interimResults: boolean;
+              lang: string;
+              onresult: (e: { results: { isFinal: boolean; 0: { transcript: string } }[] }) => void;
+              start: () => void;
+              stop: () => void;
+            };
+          }
+        ).SpeechRecognition ||
+        (
+          window as unknown as {
+            webkitSpeechRecognition?: new () => {
+              continuous: boolean;
+              interimResults: boolean;
+              lang: string;
+              onresult: (e: { results: { isFinal: boolean; 0: { transcript: string } }[] }) => void;
+              start: () => void;
+              stop: () => void;
+            };
+          }
+        ).webkitSpeechRecognition;
+
+      if (SpeechRecognitionClass) {
+        try {
+          const recognizer = new SpeechRecognitionClass();
+          recognizer.continuous = true;
+          recognizer.interimResults = true;
+          recognizer.lang = navigator.language || "en-US";
+          recognizer.onresult = (event) => {
+            let finalTranscript = "";
+            for (let i = 0; i < event.results.length; ++i) {
+              const item = event.results[i];
+              if (item?.isFinal && item[0]?.transcript) {
+                finalTranscript += item[0].transcript + " ";
+              }
+            }
+            if (finalTranscript.trim()) {
+              speechTranscriptRef.current = finalTranscript.trim();
+            }
+          };
+          recognizer.start();
+          speechRecognitionRef.current = recognizer;
+        } catch (e) {
+          console.warn("SpeechRecognition not initialized:", e);
+        }
+      }
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        const voiceFile = new File([audioBlob], `voice-note-${Date.now()}.webm`, {
+          type: "audio/webm",
+        });
+        setSelectedFile(voiceFile);
+        if (speechTranscriptRef.current.trim() && !content.trim()) {
+          setContent(speechTranscriptRef.current.trim());
+        }
+        stream.getTracks().forEach((track) => track.stop());
+      };
+
+      recorder.start(250);
+      setIsRecording(true);
+      setRecordingSeconds(0);
+      recordingTimerRef.current = window.setInterval(() => {
+        setRecordingSeconds((s) => s + 1);
+      }, 1000);
+    } catch (err) {
+      console.error("Microphone access failed:", err);
+      setDumpError(
+        "Could not access microphone. Please ensure microphone permissions are allowed.",
+      );
+    }
+  };
+
+  const stopRecording = () => {
+    if (speechRecognitionRef.current) {
+      try {
+        (speechRecognitionRef.current as { stop: () => void }).stop();
+      } catch {
+        // Ignore stop error
+      }
+      speechRecognitionRef.current = null;
+    }
+
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+    }
+  };
+
+  const handleRequestPermission = async () => {
+    const perm = await requestNotificationPermission();
+    setNotificationPermission(perm);
+  };
+
   // Handle Dump Submission
   const handleDumpSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!content.trim() || isDumping) return;
+    if ((!content.trim() && !selectedFile) || isDumping) return;
 
     try {
       setIsDumping(true);
       setDumpError(null);
       setProposal(null);
 
-      const res = await fetch("/api/dump", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: content.trim() }),
-      });
+      let res: Response;
+      const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+      if (selectedFile) {
+        const formData = new FormData();
+        formData.append("file", selectedFile);
+        if (content.trim()) {
+          formData.append("content", content.trim());
+        }
+        formData.append("userTimeZone", userTimeZone);
+
+        res = await fetch("/api/dump", {
+          method: "POST",
+          body: formData,
+        });
+      } else {
+        res = await fetch("/api/dump", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: content.trim(), userTimeZone }),
+        });
+      }
 
       const data = await res.json();
       if (!res.ok) {
@@ -105,8 +315,9 @@ function Dashboard() {
         source: data.source,
       });
 
-      // Clear input upon successful proposal creation
+      // Clear input and attachments upon successful proposal creation
       setContent("");
+      setSelectedFile(null);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setDumpError(msg);
@@ -168,6 +379,7 @@ function Dashboard() {
           proposalId: proposal.proposalId,
           tasks: approvedTasks,
           memories: approvedMemories,
+          userTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         }),
       });
 
@@ -246,6 +458,36 @@ function Dashboard() {
 
   return (
     <Page>
+      {/* Due Reminder Alerts Banner */}
+      {dueAlerts.length > 0 && (
+        <section className="mb-10 max-w-4xl border-l-4 border-primary bg-secondary/80 p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <span className="label !text-primary font-semibold text-sm">🔔 Due Reminder</span>
+            <button onClick={() => setDueAlerts([])} className="link-quiet text-xs">
+              Dismiss All
+            </button>
+          </div>
+          <div className="mt-3 space-y-3">
+            {dueAlerts.map((alert) => (
+              <div key={alert.id} className="border-t border-border/40 pt-2 text-sm">
+                <p className="font-semibold text-foreground">{alert.title}</p>
+                <p className="text-xs text-muted-foreground whitespace-pre-line">{alert.body}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Notification permission prompt */}
+      {notificationPermission === "default" && (
+        <div className="mb-6 flex max-w-4xl items-center justify-between border border-border/60 bg-secondary/30 px-4 py-3 text-xs">
+          <span>Enable browser notifications to receive task reminders when they become due.</span>
+          <button onClick={handleRequestPermission} className="btn !py-1 !px-3 text-xs">
+            Enable Notifications
+          </button>
+        </div>
+      )}
+
       {/* Header section */}
       <section className="max-w-4xl">
         <p className="label rise">Second Brain / Core Intelligence</p>
@@ -267,11 +509,63 @@ function Dashboard() {
               rows={3}
               value={content}
               onChange={(e) => setContent(e.target.value)}
-              placeholder="e.g. Submit the project report tomorrow at 5 PM."
+              placeholder="e.g. Submit the project report tomorrow at 5 PM and remind me 30 minutes before."
               className="field mt-3 text-xl leading-relaxed"
               disabled={isDumping}
             />
           </label>
+
+          {/* File attachment preview */}
+          {selectedFile && (
+            <div className="mt-3 flex items-center justify-between border border-primary/30 bg-secondary/40 px-3 py-2 text-xs">
+              <span className="truncate">
+                📎 <strong className="font-semibold">{selectedFile.name}</strong> (
+                {(selectedFile.size / 1024).toFixed(1)} KB)
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectedFile(null)}
+                className="link-quiet text-xs text-primary"
+              >
+                Remove
+              </button>
+            </div>
+          )}
+
+          {/* Action buttons bar for multimodal inputs */}
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="btn !py-2 !px-3 text-xs"
+              disabled={isDumping}
+            >
+              📎 Attach Image, PDF or Audio
+            </button>
+
+            <button
+              type="button"
+              onClick={isRecording ? stopRecording : startRecording}
+              className={`btn !py-2 !px-3 text-xs ${isRecording ? "!bg-primary !text-primary-foreground animate-pulse" : ""}`}
+              disabled={isDumping}
+            >
+              {isRecording ? `⏹ Stop Recording (${recordingSeconds}s)` : "🎙 Record Voice Note"}
+            </button>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*,application/pdf,.pdf,audio/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  setSelectedFile(file);
+                }
+                e.target.value = "";
+              }}
+            />
+          </div>
 
           {dumpError && (
             <div className="mt-4 border-l-2 border-primary bg-secondary/50 p-4 text-sm text-foreground">
@@ -281,7 +575,11 @@ function Dashboard() {
           )}
 
           <div className="mt-6 flex items-center gap-6">
-            <button type="submit" disabled={isDumping || !content.trim()} className="btn">
+            <button
+              type="submit"
+              disabled={isDumping || (!content.trim() && !selectedFile)}
+              className="btn"
+            >
               {isDumping ? "Extracting with AI..." : "Process Dump →"}
             </button>
             {isDumping && <span className="label animate-pulse">Running Ollama Model...</span>}
@@ -370,7 +668,10 @@ function Dashboard() {
                     {task.reminder?.time && (
                       <div className="mt-2 text-xs text-muted-foreground">
                         <span className="label">Reminder:</span> {task.reminder.time}{" "}
-                        {task.reminder.note ? `(${task.reminder.note})` : ""}
+                        {typeof task.reminder.offsetMinutes === "number"
+                          ? `(${task.reminder.offsetMinutes}m before)`
+                          : ""}{" "}
+                        {task.reminder.note ? `[${task.reminder.note}]` : ""}
                       </div>
                     )}
                   </div>
@@ -504,6 +805,24 @@ function Dashboard() {
                           {task.deadline && (
                             <p className="mt-1 text-xs text-primary font-mono">
                               Deadline: {new Date(task.deadline).toLocaleString()}
+                            </p>
+                          )}
+                          {task.reminder && (
+                            <p className="mt-1 text-xs text-muted-foreground font-mono">
+                              Reminder:{" "}
+                              {task.reminder.time ||
+                                (typeof task.reminder.offsetMinutes === "number"
+                                  ? `${task.reminder.offsetMinutes}m before`
+                                  : "Set")}{" "}
+                              <span
+                                className={`uppercase font-semibold text-[10px] px-1 py-0.5 border ${
+                                  task.reminder.status === "sent"
+                                    ? "border-primary text-primary"
+                                    : "border-border text-muted-foreground"
+                                }`}
+                              >
+                                {task.reminder.status || "pending"}
+                              </span>
                             </p>
                           )}
                           <p className="mt-2 text-xs text-muted-foreground italic">

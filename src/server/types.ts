@@ -1,18 +1,20 @@
 import { z } from "zod";
 
 // Zod schemas for AI extraction and request validation
+export const ReminderSchema = z.object({
+  time: z.string().nullable().optional(),
+  offsetMinutes: z.number().nullable().optional(),
+  note: z.string().nullable().optional(),
+  status: z.enum(["pending", "sent", "dismissed"]).optional(),
+  scheduledAt: z.string().nullable().optional(),
+});
+
 export const ExtractedTaskSchema = z.object({
   title: z.string().min(1, "Task title is required"),
   deadline: z.string().nullable().optional(),
   priority: z.enum(["low", "medium", "high"]).default("medium"),
   evidence: z.string().min(1, "Evidence is required"),
-  reminder: z
-    .object({
-      time: z.string().nullable().optional(),
-      note: z.string().nullable().optional(),
-    })
-    .nullable()
-    .optional(),
+  reminder: ReminderSchema.nullable().optional(),
 });
 
 export const ExtractedMemorySchema = z.object({
@@ -28,6 +30,8 @@ export const ExtractionResultSchema = z.object({
 
 export const DumpRequestSchema = z.object({
   content: z.string().min(1, "Content cannot be empty"),
+  sourceType: z.enum(["text", "image", "pdf", "audio"]).optional().default("text"),
+  userTimeZone: z.string().optional(),
 });
 
 export const ConfirmProposalRequestSchema = z.object({
@@ -35,6 +39,7 @@ export const ConfirmProposalRequestSchema = z.object({
   proposalId: z.string().optional(),
   tasks: z.array(ExtractedTaskSchema).default([]),
   memories: z.array(ExtractedMemorySchema).default([]),
+  userTimeZone: z.string().optional(),
 });
 
 export const UpdateTaskSchema = z.object({
@@ -45,10 +50,17 @@ export const UpdateTaskSchema = z.object({
   reminder: z
     .object({
       time: z.string().nullable().optional(),
+      offsetMinutes: z.number().nullable().optional(),
       note: z.string().nullable().optional(),
+      status: z.enum(["pending", "sent", "dismissed"]).optional(),
+      scheduledAt: z.string().nullable().optional(),
     })
     .nullable()
     .optional(),
+});
+
+export const UpdateReminderStatusSchema = z.object({
+  status: z.enum(["sent", "dismissed"]),
 });
 
 export const UpdateMemorySchema = z.object({
@@ -64,6 +76,8 @@ export type ExtractionResult = z.infer<typeof ExtractionResultSchema>;
 export interface DumpEntity {
   _id: string;
   content: string;
+  sourceType?: "text" | "image" | "pdf" | "audio";
+  originalFileName?: string | null;
   createdAt: string;
 }
 
@@ -87,7 +101,11 @@ export interface TaskEntity {
   reminder?:
     | {
         time?: string | null | undefined;
+        offsetMinutes?: number | null | undefined;
         note?: string | null | undefined;
+        status?: "pending" | "sent" | "dismissed" | undefined;
+        scheduledAt?: string | null | undefined;
+        sentAt?: string | null | undefined;
       }
     | null
     | undefined;
@@ -113,7 +131,11 @@ export type UpdateTaskInput = {
   reminder?:
     | {
         time?: string | null | undefined;
+        offsetMinutes?: number | null | undefined;
         note?: string | null | undefined;
+        status?: "pending" | "sent" | "dismissed" | undefined;
+        scheduledAt?: string | null | undefined;
+        sentAt?: string | null | undefined;
       }
     | null
     | undefined;

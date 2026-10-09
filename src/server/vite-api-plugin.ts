@@ -27,21 +27,24 @@ export function apiDevPlugin(): Plugin {
             }
           }
 
-          let body: string | undefined;
+          let body: Uint8Array | undefined;
           if (method !== "GET" && method !== "HEAD") {
             const chunks: Uint8Array[] = [];
             for await (const chunk of req) {
               chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
             }
-            body = Buffer.concat(chunks).toString("utf-8");
+            if (chunks.length > 0) {
+              body = Buffer.concat(chunks);
+            }
           }
 
-          const requestInit: RequestInit = {
+          const requestInit: RequestInit & { duplex?: string } = {
             method,
             headers,
           };
           if (body) {
-            requestInit.body = body;
+            requestInit.body = body as unknown as BodyInit;
+            requestInit.duplex = "half";
           }
 
           const webRequest = new Request(fullUrl, requestInit);

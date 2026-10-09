@@ -2,11 +2,14 @@ import { ZodError } from "zod";
 import { getDb, DatabaseError } from "./db";
 import { OllamaProvider } from "./ai/ollama";
 import { AIProviderError, type AIProvider } from "./ai/provider";
+import { extractTextFromImage, extractTextFromPdf, transcribeAudio } from "./multimodal";
+import { normalizeDate, parseReminderOffset, calculateScheduledReminderTime } from "./date-utils";
 import {
   DumpRequestSchema,
   ConfirmProposalRequestSchema,
   UpdateTaskSchema,
   UpdateMemorySchema,
+  UpdateReminderStatusSchema,
   type ExtractedTask,
   type ExtractedMemory,
   type TaskEntity,
@@ -43,35 +46,165 @@ export async function handleApiRequest(request: Request): Promise<Response> {
   const method = request.method.toUpperCase();
 
   try {
-    // GET /api/health
-    if (path === "/api/health" && method === "GET") {
-      const db = await getDb();
-      return jsonResponse({
-        status: "ok",
-        database: db.isRealMongo ? "mongodb" : "in-memory-fallback",
-        ai: {
-          provider: aiProvider.name,
-          model: process.env["OLLAMA_MODEL"] || "gemma3:latest",
-        },
-      });
+    // GET /api/health or GET /health
+    if ((path === "/api/health" || path === "/health") && method === "GET") {
+      try {
+        const db = await getDb();
+        return jsonResponse({
+          status: "ok",
+          database: db.isRealMongo ? "mongodb" : "in-memory-fallback",
+          ai: {
+            provider: aiProvider.name,
+            model: process.env["OLLAMA_MODEL"] || "gemma3:latest",
+          },
+        });
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "Database unavailable";
+        return jsonResponse(
+          {
+            status: "degraded",
+            database: "unavailable",
+            error: message,
+            ai: {
+              provider: aiProvider.name,
+              model: process.env["OLLAMA_MODEL"] || "gemma3:latest",
+            },
+          },
+          503,
+        );
+      }
     }
 
-    // POST /api/dump - Extract proposal from raw user text
+    // POST /api/dump - Extract proposal from raw user text, images, PDFs, or audio
     if (path === "/api/dump" && method === "POST") {
-      let body: unknown;
-      try {
-        body = await request.json();
-      } catch {
-        return errorResponse("Invalid JSON payload in request body", 400);
+      const contentType = request.headers.get("content-type") || "";
+      let rawText = "";
+      let sourceType: "text" | "image" | "pdf" | "audio" = "text";
+      let originalFileName: string | null = null;
+      let userTimeZone: string | undefined;
+
+      if (
+        contentType.includes("multipart/form-data") ||
+        Boolean((request as unknown as { _formData?: FormData })._formData)
+      ) {
+        let formData: FormData;
+        try {
+          formData =
+            (request as unknown as { _formData?: FormData })._formData ??
+            (await request.formData());
+        } catch {
+          return errorResponse("Failed to parse multipart form data", 400);
+        }
+
+        const file = formData.get("file");
+        const formContent = (formData.get("content") as string | null) || "";
+        userTimeZone = (formData.get("userTimeZone") as string | null) || undefined;
+
+        const isFileLike = Boolean(
+          file &&
+          typeof file === "object" &&
+          ("arrayBuffer" in file ||
+            (typeof Blob !== "undefined" && (file as object) instanceof Blob) ||
+            "size" in file),
+        );
+
+        if (isFileLike && file) {
+          const fileObj = file as File;
+          originalFileName = fileObj.name || (file as { name?: string }).name || null;
+          const mime = (fileObj.type || "").toLowerCase();
+          const ext = (originalFileName ? originalFileName.split(".").pop() : "")?.toLowerCase();
+
+          let buffer: Buffer;
+          if ("arrayBuffer" in fileObj && typeof fileObj.arrayBuffer === "function") {
+            const arrayBuf = await fileObj.arrayBuffer();
+            buffer = Buffer.from(arrayBuf);
+          } else if (typeof FileReader !== "undefined" && fileObj instanceof Blob) {
+            buffer = await new Promise<Buffer>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(Buffer.from(reader.result as ArrayBuffer));
+              reader.onerror = () => reject(new Error("Failed to read file"));
+              reader.readAsArrayBuffer(fileObj);
+            });
+          } else {
+            buffer = Buffer.alloc(0);
+          }
+
+          if (buffer.length === 0) {
+            return errorResponse("Uploaded file is empty (0 bytes).", 400);
+          }
+          if (buffer.length > 15 * 1024 * 1024) {
+            return errorResponse("Uploaded file exceeds 15MB limit.", 400);
+          }
+
+          // Ingest based on file type
+          if (
+            mime.startsWith("image/") ||
+            ["png", "jpg", "jpeg", "webp", "bmp"].includes(ext || "")
+          ) {
+            sourceType = "image";
+            try {
+              rawText = await extractTextFromImage(buffer);
+            } catch (err: unknown) {
+              const msg = err instanceof Error ? err.message : String(err);
+              return errorResponse(msg, 400);
+            }
+          } else if (mime === "application/pdf" || ext === "pdf") {
+            sourceType = "pdf";
+            try {
+              rawText = await extractTextFromPdf(buffer);
+            } catch (err: unknown) {
+              const msg = err instanceof Error ? err.message : String(err);
+              const statusCode = msg.includes("no extractable text") ? 422 : 400;
+              return errorResponse(msg, statusCode);
+            }
+          } else if (
+            mime.startsWith("audio/") ||
+            ["webm", "wav", "mp3", "m4a", "ogg", "aac"].includes(ext || "")
+          ) {
+            sourceType = "audio";
+            try {
+              rawText = await transcribeAudio(buffer, mime, formContent);
+            } catch (err: unknown) {
+              const msg = err instanceof Error ? err.message : String(err);
+              return errorResponse(msg, 400);
+            }
+          } else {
+            return errorResponse(`Unsupported file type: ${mime || ext || "unknown"}`, 400);
+          }
+
+          // If extra textual notes were also provided
+          if (formContent && formContent.trim() && sourceType !== "audio") {
+            rawText = `${rawText}\n\nUser Context: ${formContent.trim()}`;
+          }
+        } else if (formContent.trim()) {
+          rawText = formContent.trim();
+        } else {
+          return errorResponse("Neither text nor file was provided in form data.", 400);
+        }
+      } else {
+        // Standard JSON payload
+        let body: unknown;
+        try {
+          body = await request.json();
+        } catch {
+          return errorResponse("Invalid JSON payload in request body", 400);
+        }
+
+        const parsed = DumpRequestSchema.safeParse(body);
+        if (!parsed.success) {
+          return errorResponse(
+            parsed.error.issues[0]?.message || "Invalid dump payload",
+            400,
+            parsed.error.issues,
+          );
+        }
+        rawText = parsed.data.content;
+        sourceType = parsed.data.sourceType || "text";
+        userTimeZone = parsed.data.userTimeZone;
       }
 
-      const parsed = DumpRequestSchema.safeParse(body);
-      if (!parsed.success) {
-        return errorResponse(
-          parsed.error.issues[0]?.message || "Invalid dump payload",
-          400,
-          parsed.error.issues,
-        );
+      if (!rawText.trim()) {
+        return errorResponse("No readable text could be obtained from the input.", 400);
       }
 
       const db = await getDb();
@@ -79,12 +212,14 @@ export async function handleApiRequest(request: Request): Promise<Response> {
 
       // 1. Save original dump / source in database
       const dumpRecord = await db.dumps.insert({
-        content: parsed.data.content,
+        content: rawText,
+        sourceType,
+        originalFileName,
         createdAt: nowIso,
       });
 
-      // 2. Call AI extraction layer
-      const extraction = await aiProvider.extract(parsed.data.content, {
+      // 2. Call AI extraction layer (canonical path for all modalities)
+      const extraction = await aiProvider.extract(rawText, {
         referenceDate: new Date(),
       });
 
@@ -107,6 +242,8 @@ export async function handleApiRequest(request: Request): Promise<Response> {
           source: {
             id: dumpRecord._id,
             content: dumpRecord.content,
+            sourceType: dumpRecord.sourceType,
+            originalFileName: dumpRecord.originalFileName,
             createdAt: dumpRecord.createdAt,
           },
         },
@@ -128,8 +265,15 @@ export async function handleApiRequest(request: Request): Promise<Response> {
         return errorResponse("Invalid confirmation payload", 400, parsed.error.issues);
       }
 
-      const { dumpId, proposalId, tasks: approvedTasks, memories: approvedMemories } = parsed.data;
+      const {
+        dumpId,
+        proposalId,
+        tasks: approvedTasks,
+        memories: approvedMemories,
+        userTimeZone,
+      } = parsed.data;
       const db = await getDb();
+      const normOptions = { timeZone: userTimeZone };
 
       // Ensure original dump source exists
       const dump = await db.dumps.findById(dumpId);
@@ -157,6 +301,30 @@ export async function handleApiRequest(request: Request): Promise<Response> {
             et.deadline === (t.deadline ?? null),
         );
         if (!isDuplicate) {
+          let offsetMinutes = t.reminder?.offsetMinutes ?? null;
+          if (offsetMinutes === null && t.reminder) {
+            offsetMinutes =
+              parseReminderOffset(t.reminder.note, t.deadline, normOptions) ??
+              parseReminderOffset(t.reminder.time, t.deadline, normOptions) ??
+              parseReminderOffset(t.evidence, t.deadline, normOptions);
+          } else if (offsetMinutes === null && t.evidence) {
+            offsetMinutes = parseReminderOffset(t.evidence, t.deadline, normOptions);
+          }
+
+          let scheduledAt: string | null =
+            (t.reminder as { scheduledAt?: string | null })?.scheduledAt ?? null;
+          if (!scheduledAt && offsetMinutes !== null && t.deadline) {
+            scheduledAt = calculateScheduledReminderTime(
+              t.deadline,
+              offsetMinutes,
+              t.reminder?.time,
+            );
+          } else if (!scheduledAt && t.reminder?.time) {
+            scheduledAt = normalizeDate(t.reminder.time, normOptions);
+          }
+
+          const hasReminder = Boolean(t.reminder || offsetMinutes !== null || scheduledAt);
+
           const inserted = await db.tasks.insert({
             dumpId,
             title: t.title,
@@ -164,10 +332,15 @@ export async function handleApiRequest(request: Request): Promise<Response> {
             priority: t.priority ?? "medium",
             completed: false,
             evidence: t.evidence || dump.content,
-            reminder: t.reminder
+            reminder: hasReminder
               ? {
-                  time: t.reminder.time ?? null,
-                  note: t.reminder.note ?? null,
+                  time: t.reminder?.time ?? scheduledAt,
+                  offsetMinutes: offsetMinutes ?? null,
+                  note:
+                    t.reminder?.note ??
+                    (offsetMinutes !== null ? `${offsetMinutes} minutes before` : null),
+                  status: "pending",
+                  scheduledAt: scheduledAt ?? t.reminder?.time ?? null,
                 }
               : null,
             createdAt: nowIso,
@@ -270,6 +443,47 @@ export async function handleApiRequest(request: Request): Promise<Response> {
       }
 
       return jsonResponse({ success: true, id });
+    }
+
+    // GET /api/reminders/due - Retrieve pending due reminders
+    if (path === "/api/reminders/due" && method === "GET") {
+      const db = await getDb();
+      const beforeParam = url.searchParams.get("before");
+      const reminders = await db.tasks.findDueReminders(beforeParam || undefined);
+      return jsonResponse({ reminders });
+    }
+
+    // PATCH /api/reminders/:id - Update reminder status (e.g. sent, dismissed)
+    if (path.startsWith("/api/reminders/") && method === "PATCH") {
+      const id = path.slice("/api/reminders/".length);
+      if (!id) return errorResponse("Reminder ID is required", 400);
+
+      let body: unknown;
+      try {
+        body = await request.json();
+      } catch {
+        return errorResponse("Invalid JSON payload", 400);
+      }
+
+      const parsed = UpdateReminderStatusSchema.safeParse(body);
+      if (!parsed.success) {
+        return errorResponse("Invalid status value", 400, parsed.error.issues);
+      }
+
+      const db = await getDb();
+      const task = await db.tasks.findById(id);
+      if (!task) {
+        return errorResponse(`Task with ID ${id} not found`, 404);
+      }
+
+      const updated = await db.tasks.update(id, {
+        reminder: {
+          status: parsed.data.status,
+          sentAt: parsed.data.status === "sent" ? new Date().toISOString() : task.reminder?.sentAt,
+        },
+      });
+
+      return jsonResponse({ success: true, task: updated });
     }
 
     // GET /api/memories - List all memories

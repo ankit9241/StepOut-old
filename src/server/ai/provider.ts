@@ -11,7 +11,8 @@ export class AIProviderError extends Error {
 }
 
 export interface ExtractionOptions {
-  referenceDate?: Date;
+  referenceDate?: Date | undefined;
+  userTimeZone?: string | undefined;
 }
 
 export interface AIProvider {

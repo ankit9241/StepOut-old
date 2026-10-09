@@ -48,9 +48,9 @@ function How() {
         <p className="label md:col-span-4">Why open-source AI?</p>
         <div className="max-w-xl md:col-span-8">
           <p className="text-lg">
-            StepOut is designed around open-weight models. Challenge generation can run
-            locally, on your own hardware, and the model can be swapped or adapted to your place,
-            language and pace.
+            StepOut is designed around open-weight models. Challenge generation can run locally, on
+            your own hardware, and the model can be swapped or adapted to your place, language and
+            pace.
           </p>
           <Link to="/create" className="btn mt-10">
             Get a challenge →

@@ -34,6 +34,7 @@ export interface DatabaseAdapter {
     findById: (id: string) => Promise<TaskEntity | null>;
     update: (id: string, partial: UpdateTaskInput) => Promise<TaskEntity | null>;
     delete: (id: string) => Promise<boolean>;
+    findDueReminders: (targetTimeIso?: string) => Promise<TaskEntity[]>;
   };
   memories: {
     insert: (doc: Omit<MemoryEntity, "_id">) => Promise<MemoryEntity>;
@@ -106,7 +107,17 @@ class MemoryDatabaseAdapter implements DatabaseAdapter {
         ...(partial.deadline !== undefined ? { deadline: partial.deadline } : {}),
         ...(partial.priority !== undefined ? { priority: partial.priority } : {}),
         ...(partial.completed !== undefined ? { completed: partial.completed } : {}),
-        ...(partial.reminder !== undefined ? { reminder: partial.reminder } : {}),
+        ...(partial.reminder !== undefined
+          ? {
+              reminder:
+                partial.reminder === null
+                  ? null
+                  : {
+                      ...(existing.reminder || {}),
+                      ...partial.reminder,
+                    },
+            }
+          : {}),
         updatedAt: new Date().toISOString(),
       };
       this.tasksMap.set(id, updated);
@@ -114,6 +125,25 @@ class MemoryDatabaseAdapter implements DatabaseAdapter {
     },
     delete: async (id: string): Promise<boolean> => {
       return this.tasksMap.delete(id);
+    },
+    findDueReminders: async (targetTimeIso?: string): Promise<TaskEntity[]> => {
+      const nowIso = targetTimeIso || new Date().toISOString();
+      const all = Array.from(this.tasksMap.values());
+      return all
+        .filter((t) => {
+          if (t.completed) return false;
+          if (!t.reminder) return false;
+          const status = t.reminder.status || "pending";
+          if (status !== "pending") return false;
+          const sched = t.reminder.scheduledAt || t.reminder.time;
+          if (!sched) return false;
+          return sched <= nowIso;
+        })
+        .sort((a, b) => {
+          const aTime = a.reminder?.scheduledAt || a.reminder?.time || "";
+          const bTime = b.reminder?.scheduledAt || b.reminder?.time || "";
+          return aTime.localeCompare(bTime);
+        });
     },
   };
 
@@ -212,11 +242,26 @@ class MongoDatabaseAdapter implements DatabaseAdapter {
       return { ...(res as unknown as TaskEntity), _id: res._id.toHexString() };
     },
     update: async (id: string, partial: UpdateTaskInput): Promise<TaskEntity | null> => {
+      const updateDoc: Record<string, unknown> = { updatedAt: new Date().toISOString() };
+      if (partial.title !== undefined) updateDoc["title"] = partial.title;
+      if (partial.deadline !== undefined) updateDoc["deadline"] = partial.deadline;
+      if (partial.priority !== undefined) updateDoc["priority"] = partial.priority;
+      if (partial.completed !== undefined) updateDoc["completed"] = partial.completed;
+      if (partial.reminder !== undefined) {
+        if (partial.reminder === null) {
+          updateDoc["reminder"] = null;
+        } else {
+          for (const [k, v] of Object.entries(partial.reminder)) {
+            updateDoc[`reminder.${k}`] = v;
+          }
+        }
+      }
+
       const res = await this.db
         .collection("tasks")
         .findOneAndUpdate(
           { _id: this.toObjectId(id) },
-          { $set: { ...partial, updatedAt: new Date().toISOString() } },
+          { $set: updateDoc },
           { returnDocument: "after" },
         );
       if (!res) return null;
@@ -225,6 +270,32 @@ class MongoDatabaseAdapter implements DatabaseAdapter {
     delete: async (id: string): Promise<boolean> => {
       const res = await this.db.collection("tasks").deleteOne({ _id: this.toObjectId(id) });
       return (res.deletedCount ?? 0) > 0;
+    },
+    findDueReminders: async (targetTimeIso?: string): Promise<TaskEntity[]> => {
+      const nowIso = targetTimeIso || new Date().toISOString();
+      const cursor = this.db
+        .collection("tasks")
+        .find({
+          completed: { $ne: true },
+          $or: [
+            {
+              "reminder.status": "pending",
+              "reminder.scheduledAt": { $lte: nowIso },
+            },
+            {
+              "reminder.status": "pending",
+              "reminder.scheduledAt": { $exists: false },
+              "reminder.time": { $lte: nowIso },
+            },
+            {
+              "reminder.status": { $exists: false },
+              "reminder.time": { $lte: nowIso },
+            },
+          ],
+        })
+        .sort({ "reminder.scheduledAt": 1 });
+      const docs = await cursor.toArray();
+      return docs.map((d) => ({ ...(d as unknown as TaskEntity), _id: d._id.toHexString() }));
     },
   };
 
@@ -272,8 +343,13 @@ export async function getDb(): Promise<DatabaseAdapter> {
 
   const mongoUri = process.env["MONGODB_URI"];
   const dbName = process.env["MONGODB_DB_NAME"] || "stepout";
+  const isProduction = process.env["NODE_ENV"] === "production";
   const allowFallback =
-    process.env["NODE_ENV"] === "test" || process.env["ALLOW_IN_MEMORY_DB"] === "true" || !mongoUri;
+    !isProduction &&
+    process.env["ALLOW_IN_MEMORY_DB"] !== "false" &&
+    (process.env["NODE_ENV"] === "test" ||
+      !mongoUri ||
+      process.env["ALLOW_IN_MEMORY_DB"] === "true");
 
   if (mongoUri && mongoUri !== "memory") {
     try {
@@ -295,7 +371,10 @@ export async function getDb(): Promise<DatabaseAdapter> {
         cachedAdapter = new MemoryDatabaseAdapter();
         return cachedAdapter;
       }
-      throw new DatabaseError(`Failed to connect to MongoDB: ${message}`, 503);
+      throw new DatabaseError(
+        `Failed to connect to MongoDB: ${message}. In-memory fallback is disabled in production.`,
+        503,
+      );
     }
   }
 
@@ -305,9 +384,25 @@ export async function getDb(): Promise<DatabaseAdapter> {
     return cachedAdapter;
   }
 
-  throw new DatabaseError("MONGODB_URI is not configured in environment variables", 500);
+  throw new DatabaseError(
+    "MONGODB_URI is not configured in environment variables and in-memory fallback is disabled in production",
+    500,
+  );
 }
 
 export function resetDbForTesting(): void {
   cachedAdapter = new MemoryDatabaseAdapter();
+}
+
+export async function closeDbForTesting(): Promise<void> {
+  if (clientPromise) {
+    try {
+      const client = await clientPromise;
+      await client.close();
+    } catch {
+      // Ignore cleanup error
+    }
+    clientPromise = null;
+  }
+  cachedAdapter = null;
 }

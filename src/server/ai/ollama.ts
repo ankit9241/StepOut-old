@@ -1,5 +1,5 @@
 import { ExtractionResultSchema, type ExtractionResult } from "../types";
-import { normalizeDate } from "../date-utils";
+import { normalizeDate, parseReminderOffset, calculateScheduledReminderTime } from "../date-utils";
 import { AIProviderError, type AIProvider, type ExtractionOptions } from "./provider";
 
 export class OllamaProvider implements AIProvider {
@@ -15,7 +15,10 @@ export class OllamaProvider implements AIProvider {
       "http://127.0.0.1:11434"
     ).replace(/\/+$/, "");
     this.model = options?.model || process.env["OLLAMA_MODEL"] || "gemma3:latest";
-    this.timeoutMs = options?.timeoutMs || 45000;
+    const envTimeout = process.env["OLLAMA_TIMEOUT_MS"]
+      ? parseInt(process.env["OLLAMA_TIMEOUT_MS"], 10)
+      : undefined;
+    this.timeoutMs = options?.timeoutMs || (envTimeout && !isNaN(envTimeout) ? envTimeout : 60000);
   }
 
   async extract(content: string, options?: ExtractionOptions): Promise<ExtractionResult> {
@@ -51,6 +54,7 @@ export class OllamaProvider implements AIProvider {
                       type: "object",
                       properties: {
                         time: { type: "string" },
+                        offsetMinutes: { type: "number" },
                         note: { type: "string" },
                       },
                     },
@@ -110,9 +114,14 @@ export class OllamaProvider implements AIProvider {
         throw new AIProviderError("AI request timed out", 504);
       }
       const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("ECONNREFUSED") || message.includes("Failed to fetch")) {
+      if (
+        message.includes("ECONNREFUSED") ||
+        message.includes("Failed to fetch") ||
+        message.includes("fetch failed") ||
+        message.includes("ENOTFOUND")
+      ) {
         throw new AIProviderError(
-          `Cannot connect to Ollama at ${this.baseUrl}. Please verify Ollama is running.`,
+          `Cannot connect to Ollama at ${this.baseUrl}. Please verify Ollama is running and accessible from this environment (check OLLAMA_BASE_URL).`,
           503,
         );
       }
@@ -132,20 +141,48 @@ export class OllamaProvider implements AIProvider {
       );
     }
 
-    // Post-process & normalize dates and deadlines
+    // Post-process & normalize dates, deadlines, and reminder offsets
+    const normOptions = { referenceDate, timeZone: options?.userTimeZone };
     const normalizedTasks = validationResult.data.tasks.map((task) => {
-      const normDeadline = task.deadline ? normalizeDate(task.deadline, referenceDate) : null;
-      const normReminderTime = task.reminder?.time
-        ? normalizeDate(task.reminder.time, referenceDate)
+      const normDeadline = task.deadline ? normalizeDate(task.deadline, normOptions) : null;
+
+      let offsetMinutes = task.reminder?.offsetMinutes ?? null;
+      if (offsetMinutes === null && task.reminder) {
+        offsetMinutes =
+          parseReminderOffset(task.reminder.note, normDeadline, normOptions) ??
+          parseReminderOffset(task.reminder.time, normDeadline, normOptions) ??
+          parseReminderOffset(task.evidence, normDeadline, normOptions);
+      } else if (offsetMinutes === null && task.evidence) {
+        const evOffset = parseReminderOffset(task.evidence, normDeadline, normOptions);
+        if (evOffset !== null) {
+          offsetMinutes = evOffset;
+        }
+      }
+
+      let normReminderTime = task.reminder?.time
+        ? normalizeDate(task.reminder.time, normOptions)
         : null;
+
+      if (offsetMinutes !== null && normDeadline) {
+        normReminderTime = calculateScheduledReminderTime(
+          normDeadline,
+          offsetMinutes,
+          normReminderTime,
+        );
+      }
+
+      const hasReminder = Boolean(task.reminder || offsetMinutes !== null || normReminderTime);
 
       return {
         ...task,
         deadline: normDeadline,
-        reminder: task.reminder
+        reminder: hasReminder
           ? {
               time: normReminderTime,
-              note: task.reminder.note ?? null,
+              offsetMinutes: offsetMinutes ?? null,
+              note:
+                task.reminder?.note ??
+                (offsetMinutes !== null ? `${offsetMinutes} minutes before` : null),
             }
           : null,
       };
