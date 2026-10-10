@@ -7,6 +7,7 @@
     "dev": "vite dev",
     "build": "vite build",
     "start": "node scripts/start.mjs",
+    "proxy:ollama": "node scripts/ollama-proxy.mjs",
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",

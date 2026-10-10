@@ -20,6 +20,8 @@ services:
         value: stepout
       - key: OLLAMA_BASE_URL
         sync: false
+      - key: OLLAMA_API_KEY
+        sync: false
       - key: OLLAMA_MODEL
         value: gemma3:latest
       - key: OLLAMA_TIMEOUT_MS

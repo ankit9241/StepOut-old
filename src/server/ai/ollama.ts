@@ -7,8 +7,9 @@ export class OllamaProvider implements AIProvider {
   private baseUrl: string;
   private model: string;
   private timeoutMs: number;
+  private apiKey?: string | undefined;
 
-  constructor(options?: { baseUrl?: string; model?: string; timeoutMs?: number }) {
+  constructor(options?: { baseUrl?: string; model?: string; timeoutMs?: number; apiKey?: string }) {
     this.baseUrl = (
       options?.baseUrl ||
       process.env["OLLAMA_BASE_URL"] ||
@@ -19,6 +20,7 @@ export class OllamaProvider implements AIProvider {
       ? parseInt(process.env["OLLAMA_TIMEOUT_MS"], 10)
       : undefined;
     this.timeoutMs = options?.timeoutMs || (envTimeout && !isNaN(envTimeout) ? envTimeout : 60000);
+    this.apiKey = options?.apiKey || process.env["OLLAMA_API_KEY"] || undefined;
   }
 
   async extract(content: string, options?: ExtractionOptions): Promise<ExtractionResult> {
@@ -31,9 +33,16 @@ export class OllamaProvider implements AIProvider {
     let rawJson: unknown;
 
     try {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (this.apiKey) {
+        headers["Authorization"] = `Bearer ${this.apiKey}`;
+      }
+
       const response = await fetch(`${this.baseUrl}/api/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         signal: controller.signal,
         body: JSON.stringify({
           model: this.model,
@@ -92,9 +101,15 @@ export class OllamaProvider implements AIProvider {
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => "");
+        const status =
+          response.status >= 500
+            ? 502
+            : [401, 403, 404, 429].includes(response.status)
+              ? response.status
+              : 400;
         throw new AIProviderError(
           `Ollama returned HTTP ${response.status}: ${errorText || response.statusText}`,
-          response.status >= 500 ? 502 : 400,
+          status,
         );
       }
 
